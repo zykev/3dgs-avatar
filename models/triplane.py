@@ -65,19 +65,10 @@ class CrossAttention(nn.Module):
         return fused
 
 
-class SineActivation(nn.Module):
-    def __init__(self, omega_0=30) -> None:
-        super().__init__()
-        self.omega_0 = omega_0
-    
-    def forward(self, x):
-        return torch.sin(self.omega_0 * x)
-
 
 act_fn_dict = {
     'softplus': torch.nn.Softplus(),
     'relu': torch.nn.ReLU(),
-    'sine': SineActivation(omega_0=30),
     'gelu': torch.nn.GELU(),
     'tanh': torch.nn.Tanh(),
 }
@@ -98,6 +89,14 @@ class Clamp(nn.Module):
 
     def forward(self, x):
         return torch.clamp(x, self.min_val, self.max_val)
+
+class Softplus(nn.Module):
+    def __init__(self, scale_factor: int) -> None:
+        super().__init__()
+        self.scale_factor = scale_factor
+
+    def forward(self, x):
+        return self.scale_factor * torch.nn.functional.softplus(x)
     
 
 class AppearanceDecoder(torch.nn.Module):
@@ -137,7 +136,7 @@ class GeometryDecoder(torch.nn.Module):
         )
         self.xyz = nn.Sequential(nn.Conv2d(self.hidden_dim, 3, kernel_size=1), Clamp(-1, 1))
         self.rotations = nn.Sequential(nn.Conv2d(self.hidden_dim, 4, kernel_size=1), Normalize(dim=-1))
-        self.scales = nn.Sequential(nn.Conv2d(self.hidden_dim, 3, kernel_size=1), nn.GELU())
+        self.scales = nn.Sequential(nn.Conv2d(self.hidden_dim, 3, kernel_size=1), Softplus(scale_factor=10))
 
         
     def forward(self, x):
