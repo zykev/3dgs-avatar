@@ -20,7 +20,7 @@ class RefinedZJUMoCapDataset(Dataset):
         self.cfg = cfg
         self.split = split
 
-        self.root_dir = '../../data/refined_ZJUMoCap/zju-mocap/'
+        self.root_dir = cfg.root_dir
         self.subject = 'my_' + cfg.subject[-3:]
         self.train_frames = cfg.train_frames
         self.train_cams = cfg.train_views
@@ -35,10 +35,10 @@ class RefinedZJUMoCapDataset(Dataset):
         self.cameras = annots['cams']
         num_cams = len(self.cameras['K'])
 
-        self.faces = np.load('body_models/misc/faces.npz')['faces']
-        self.skinning_weights = dict(np.load('body_models/misc/skinning_weights_all.npz'))
-        self.posedirs = dict(np.load('body_models/misc/posedirs_all.npz'))
-        self.J_regressor = dict(np.load('body_models/misc/J_regressors.npz'))
+        self.faces = np.load('data/body_models/misc/faces.npz')['faces']
+        self.skinning_weights = dict(np.load('data/body_models/misc/skinning_weights_all.npz'))
+        self.posedirs = dict(np.load('data/body_models/misc/posedirs_all.npz'))
+        self.J_regressor = dict(np.load('data/body_models/misc/J_regressors.npz'))
 
         if split == 'train':
             cam_names = self.train_cams
@@ -57,8 +57,8 @@ class RefinedZJUMoCapDataset(Dataset):
 
         if len(cam_names) == 0:
             cam_names = list(range(num_cams))
-        else:
-            cam_names = [int(cams) - 1 for cams in cam_names]
+        # else:
+        #     cam_names = [int(cams) - 1 for cams in cam_names]
 
         start_frame, end_frame, sampling_rate = frames
 
@@ -113,9 +113,11 @@ class RefinedZJUMoCapDataset(Dataset):
                     })
         else:
             for cam_idx, cam_name in enumerate(cam_names):
-                cam_dir = os.path.join(subject_dir, cam_name)
-                img_files = sorted(glob.glob(os.path.join(cam_dir, '*.jpg')))[frame_slice]
-                mask_files = sorted(glob.glob(os.path.join(cam_dir, '*.png')))[frame_slice]
+                # cam_dir = os.path.join(subject_dir, cam_name)
+                img_files = sorted(glob.glob(os.path.join(subject_dir, 'images', cam_name, '*.jpg')))[frame_slice]
+                mask_files = sorted(glob.glob(os.path.join(subject_dir, 'mask', cam_name, '*.png')))[frame_slice]
+                # img_files = sorted(glob.glob(os.path.join(cam_dir, '*.jpg')))[frame_slice]
+                # mask_files = sorted(glob.glob(os.path.join(cam_dir, '*.png')))[frame_slice]
 
                 for d_idx, f_idx in enumerate(frames):
                     img_file = img_files[d_idx]

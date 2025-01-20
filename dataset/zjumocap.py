@@ -35,10 +35,10 @@ class ZJUMoCapDataset(Dataset):
         self.H, self.W = 1024, 1024 # hardcoded original size
         self.h, self.w = cfg.img_hw
 
-        self.faces = np.load('body_models/misc/faces.npz')['faces']
-        self.skinning_weights = dict(np.load('body_models/misc/skinning_weights_all.npz'))
-        self.posedirs = dict(np.load('body_models/misc/posedirs_all.npz'))
-        self.J_regressor = dict(np.load('body_models/misc/J_regressors.npz'))
+        self.faces = np.load('data/body_models/misc/faces.npz')['faces']
+        self.skinning_weights = dict(np.load('data/body_models/misc/skinning_weights_all.npz'))
+        self.posedirs = dict(np.load('data/body_models/misc/posedirs_all.npz'))
+        self.J_regressor = dict(np.load('data/body_models/misc/J_regressors.npz'))
 
         if split == 'train':
             cam_names = self.train_cams

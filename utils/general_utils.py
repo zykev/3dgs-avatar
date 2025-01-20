@@ -180,6 +180,39 @@ def rotation_matrix_to_quaternion(rotation_matrix: torch.Tensor, eps: float = 1.
     quaternion: torch.Tensor = torch.where(trace > 0.0, trace_positive_cond(), where_1)
     return quaternion
 
+def quaternion_to_rotation_matrix(quaternions):
+    """
+    将四元数转换为旋转矩阵。
+
+    参数:
+        quaternions: 形状为 (bs, N, 4) 的张量，表示四元数。
+
+    返回:
+        rotation_matrices: 形状为 (bs, N, 3, 3) 的张量，表示旋转矩阵。
+    """
+    # 提取四元数的分量
+    w, x, y, z = quaternions.unbind(dim=-1)  # 每个分量的形状: (bs, N)
+
+    # 计算旋转矩阵的元素
+    xx = x * x
+    yy = y * y
+    zz = z * z
+    xy = x * y
+    xz = x * z
+    yz = y * z
+    wx = w * x
+    wy = w * y
+    wz = w * z
+
+    # 构建旋转矩阵
+    rotation_matrices = torch.stack([
+        1 - 2 * (yy + zz), 2 * (xy - wz), 2 * (xz + wy),
+        2 * (xy + wz), 1 - 2 * (xx + zz), 2 * (yz - wx),
+        2 * (xz - wy), 2 * (yz + wx), 1 - 2 * (xx + yy)
+    ], dim=-1).view(*quaternions.shape[:-1], 3, 3)  # 形状: (bs, N, 3, 3)
+
+    return rotation_matrices
+
 
 def quaternion_multiply(r, s):
     r0, r1, r2, r3 = r.unbind(-1)

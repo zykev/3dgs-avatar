@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - dataset: zjumocap_377_mono
+  - dataset: refined_zjumocap_377_mono
   - pose_correction: direct
   - texture: shallow_mlp
   - rigid: skinning_field

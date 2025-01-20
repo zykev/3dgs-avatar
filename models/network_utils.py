@@ -4,7 +4,13 @@ import torch.nn as nn
 import tinycudann as tcnn
 from omegaconf import OmegaConf
 
-
+act_fn_dict = {
+    'softplus': torch.nn.Softplus(),
+    'relu': torch.nn.ReLU(),
+    'leaky_relu': torch.nn.LeakyReLU(),
+    'gelu': torch.nn.GELU(),
+    'tanh': torch.nn.Tanh(),
+}
 class Embedder:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
@@ -216,7 +222,7 @@ class VanillaCondMLP(nn.Module):
 
             setattr(self, "lin" + str(l), lin)
 
-        self.activation = nn.LeakyReLU()
+        self.activation = act_fn_dict[config.activation]
 
     def forward(self, coords, cond=None):
         if cond is not None:

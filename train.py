@@ -297,6 +297,7 @@ def validation(iteration, testing_iterations, testing_interval, scene : Scene, e
     scene.train()
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
+
 def main(config):
     print(OmegaConf.to_yaml(config))
     OmegaConf.set_struct(config, False) # allow adding new values to config
@@ -310,8 +311,8 @@ def main(config):
     wandb.init(
         mode="disabled" if config.wandb_disable else None,
         name=wandb_name,
-        project='gaussian-splatting-avatar',
-        entity='fast-avatar',
+        project='3dgs_human',
+        # entity='personal',
         dir=config.exp_dir,
         config=OmegaConf.to_container(config, resolve=True),
         settings=wandb.Settings(start_method='fork'),
