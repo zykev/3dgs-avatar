@@ -35,10 +35,10 @@ class ZJUMoCapDataset(Dataset):
         self.H, self.W = 1024, 1024 # hardcoded original size
         self.h, self.w = cfg.img_hw
 
-        self.faces = np.load('body_models/misc/faces.npz')['faces']
-        self.skinning_weights = dict(np.load('body_models/misc/skinning_weights_all.npz'))
-        self.posedirs = dict(np.load('body_models/misc/posedirs_all.npz'))
-        self.J_regressor = dict(np.load('body_models/misc/J_regressors.npz'))
+        self.faces = np.load('.datasets/body_models/misc/faces.npz')['faces']
+        self.skinning_weights = dict(np.load('.datasets/body_models/misc/skinning_weights_all.npz'))
+        self.posedirs = dict(np.load('.datasets/body_models/misc/posedirs_all.npz'))
+        self.J_regressor = dict(np.load('.datasets/body_models/misc/J_regressors.npz'))
 
         if split == 'train':
             cam_names = self.train_cams
@@ -223,7 +223,7 @@ class ZJUMoCapDataset(Dataset):
         coord_max = np.max(vertices, axis=0)
         coord_min = np.min(vertices, axis=0)
         padding_ratio = self.cfg.padding
-        padding_ratio = np.array(padding_ratio, dtype=np.float)
+        padding_ratio = np.array(padding_ratio, dtype=np.float32)
         padding = (coord_max - coord_min) * padding_ratio
         coord_max += padding
         coord_min -= padding

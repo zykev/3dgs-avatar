@@ -177,6 +177,15 @@ def training(config):
             loss += lbd * value
         loss.backward()
 
+        # if iteration % testing_interval == 0:
+        if iteration == 1200:
+            for name, param in scene.converter.named_parameters():
+                print(f"{name}: requires_grad={param.requires_grad}, grad is None={param.grad is None}")
+                if param.grad is not None:
+                    print(f"Layer: {name}, Gradient mean: {param.grad.mean().item()}, Gradient std: {param.grad.std().item()}")
+
+        #     pass
+
         iter_end.record()
         torch.cuda.synchronize()
 
@@ -213,17 +222,17 @@ def training(config):
                 scene.save(iteration)
 
             # Densification
-            if iteration < opt.densify_until_iter and iteration > model.gaussian.delay:
-                # Keep track of max radii in image-space for pruning
-                gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-                gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+            # if iteration < opt.densify_until_iter and iteration > model.gaussian.delay:
+            #     # Keep track of max radii in image-space for pruning
+            #     gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
+            #     gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
-                if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
-                    size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    gaussians.densify_and_prune(opt, scene, size_threshold)
+            #     if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
+            #         size_threshold = 20 if iteration > opt.opacity_reset_interval else None
+            #         gaussians.densify_and_prune(opt, scene, size_threshold)
                 
-                if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
-                    gaussians.reset_opacity()
+            #     if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
+            #         gaussians.reset_opacity()
 
             # Optimizer step
             if iteration < opt.iterations:
@@ -310,8 +319,8 @@ def main(config):
     wandb.init(
         mode="disabled" if config.wandb_disable else None,
         name=wandb_name,
-        project='gaussian-splatting-avatar',
-        entity='fast-avatar',
+        project='3dgs_human',
+        # entity='fast-avatar',
         dir=config.exp_dir,
         config=OmegaConf.to_container(config, resolve=True),
         settings=wandb.Settings(start_method='fork'),

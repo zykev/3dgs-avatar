@@ -134,7 +134,7 @@ class SkinningField(RigidDeform):
         self.smpl_verts = metadata["smpl_verts"]
         self.skinning_weights = metadata["skinning_weights"]
         self.aabb = metadata["aabb"]
-        self.faces = np.load('body_models/misc/faces.npz')['faces']
+        self.faces = np.load('.datasets/body_models/misc/faces.npz')['faces']
         self.cano_mesh = metadata["cano_mesh"]
 
         self.distill = cfg.distill
@@ -249,4 +249,5 @@ def get_rigid_deform(cfg, metadata):
         "smpl_nn": SMPLNN,
         "skinning_field": SkinningField,
     }
+
     return model_dict[name](cfg, metadata)

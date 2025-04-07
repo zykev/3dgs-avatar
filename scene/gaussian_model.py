@@ -461,6 +461,8 @@ class GaussianModel:
             big_points_ws = self.get_scaling.max(1).values > 0.1 * extent
             prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
 
+        print('total points num: ', self._xyz.shape[0], 'prune num: ', prune_mask.sum().item())
+        
         self.prune_points(prune_mask)
 
         torch.cuda.empty_cache()

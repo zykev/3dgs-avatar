@@ -13,6 +13,11 @@ import torch
 import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 
+def print_grad(name):
+    def hook(grad):
+        print(f"Gradient of {name}: {grad.mean().item() if grad is not None else 'None'}")
+    return hook
+
 def render(data,
            iteration,
            scene,
@@ -75,8 +80,9 @@ def render(data,
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
     shs = None
+    semantic_feature = torch.zeros((means3D.shape[0], 32*3, 1), device=means3D.device) 
 
-    # Rasterize visible Gaussians to image, obtain their radii (on screen). 
+    # Rasterize visible Gaussians to image, obtain their radii (on screen).
     rendered_image, radii = rasterizer(
         means3D = means3D,
         means2D = means2D,
@@ -99,8 +105,36 @@ def render(data,
             rotations=rotations,
             cov3D_precomp=cov3D_precomp)
         opacity_image = opacity_image[:1]
+        
+    # rendered_image, feature_map, radii, depth = rasterizer(
+    #     means3D = means3D,
+    #     means2D = means2D,
+    #     shs = None,
+    #     colors_precomp = colors_precomp,
+    #     semantic_feature = semantic_feature,
+    #     opacities = opacity,
+    #     scales = scales,
+    #     rotations = rotations,
+    #     cov3D_precomp = cov3D_precomp)
+    
+        
+    # if return_opacity:
+    #     opacity_image, _, _, _ = rasterizer(
+    #         means3D=means3D,
+    #         means2D=means2D,
+    #         shs=None,
+    #         colors_precomp=torch.ones_like(colors_precomp),
+    #         semantic_feature=torch.zeros_like(semantic_feature),
+    #         opacities=opacity,
+    #         scales=scales,
+    #         rotations=rotations,
+    #         cov3D_precomp=cov3D_precomp)
+    #     opacity_image = opacity_image[:1]
 
-
+    # 注册 hook 以检查梯度
+    # means3D.register_hook(print_grad("xyz_deform (means3D)"))
+    # opacity.register_hook(print_grad("opacity"))
+    
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     return {"deformed_gaussian": pc,

@@ -1,10 +1,10 @@
 defaults:
   - _self_
-  - dataset: zjumocap_377_mono
+  - dataset: zjumocap_386_mono # zjumocap_377_mono
   - pose_correction: direct
-  - texture: shallow_mlp
+  - texture: sh # shallow_mlp
   - rigid: skinning_field
-  - non_rigid: hashgrid
+  - non_rigid: hannw_mlp #hashgrid
   - option:
       - iter15k
 
@@ -65,8 +65,8 @@ opt:
   lr_ratio: 0.01
 
   # loss weights
-  lambda_l1: 1.
-  lambda_dssim: 0.
+  lambda_l1: 0.8
+  lambda_dssim: 0.2
   lambda_perceptual: 1e-2
   mask_loss_type: l1
 #  lambda_mask: [0.1,5000,0]
@@ -74,8 +74,8 @@ opt:
   lambda_opacity: 0.
   lambda_skinning: [10,1000,0.1]
   lambda_pose: 0.
-  lambda_aiap_xyz: 1.
-  lambda_aiap_cov: 100.
+  lambda_aiap_xyz: 0. # 1.
+  lambda_aiap_cov: 0. # 100.
 
   # densification configs
   percent_dense: 0.01
@@ -83,7 +83,7 @@ opt:
   opacity_reset_interval: 3000
   densify_from_iter: 500
   densify_until_iter: 45000
-  densify_grad_threshold: 0.0002
+  densify_grad_threshold: 0.0002 # 0.0002
   opacity_threshold: 0.05
 
 pipeline:

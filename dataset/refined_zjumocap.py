@@ -20,8 +20,8 @@ class RefinedZJUMoCapDataset(Dataset):
         self.cfg = cfg
         self.split = split
 
-        self.root_dir = '../../data/refined_ZJUMoCap/zju-mocap/'
-        self.subject = 'my_' + cfg.subject[-3:]
+        self.root_dir = '.datasets/zjumocap/'
+        self.subject = cfg.subject
         self.train_frames = cfg.train_frames
         self.train_cams = cfg.train_views
         self.val_frames = cfg.val_frames
@@ -35,10 +35,10 @@ class RefinedZJUMoCapDataset(Dataset):
         self.cameras = annots['cams']
         num_cams = len(self.cameras['K'])
 
-        self.faces = np.load('body_models/misc/faces.npz')['faces']
-        self.skinning_weights = dict(np.load('body_models/misc/skinning_weights_all.npz'))
-        self.posedirs = dict(np.load('body_models/misc/posedirs_all.npz'))
-        self.J_regressor = dict(np.load('body_models/misc/J_regressors.npz'))
+        self.faces = np.load('.datasets/body_models/misc/faces.npz')['faces']
+        self.skinning_weights = dict(np.load('.datasets/body_models/misc/skinning_weights_all.npz'))
+        self.posedirs = dict(np.load('.datasets/body_models/misc/posedirs_all.npz'))
+        self.J_regressor = dict(np.load('.datasets/body_models/misc/J_regressors.npz'))
 
         if split == 'train':
             cam_names = self.train_cams
@@ -55,10 +55,10 @@ class RefinedZJUMoCapDataset(Dataset):
         else:
             raise ValueError
 
-        if len(cam_names) == 0:
-            cam_names = list(range(num_cams))
-        else:
-            cam_names = [int(cams) - 1 for cams in cam_names]
+        # if len(cam_names) == 0:
+        #     cam_names = list(range(num_cams))
+        # else:
+        #     cam_names = [int(cams) - 1 for cams in cam_names]
 
         start_frame, end_frame, sampling_rate = frames
 
@@ -113,9 +113,8 @@ class RefinedZJUMoCapDataset(Dataset):
                     })
         else:
             for cam_idx, cam_name in enumerate(cam_names):
-                cam_dir = os.path.join(subject_dir, cam_name)
-                img_files = sorted(glob.glob(os.path.join(cam_dir, '*.jpg')))[frame_slice]
-                mask_files = sorted(glob.glob(os.path.join(cam_dir, '*.png')))[frame_slice]
+                img_files = sorted(glob.glob(os.path.join(subject_dir, f'images/{cam_name}', '*.jpg')))[frame_slice]
+                mask_files = sorted(glob.glob(os.path.join(subject_dir, f'mask/{cam_name}', '*.png')))[frame_slice]
 
                 for d_idx, f_idx in enumerate(frames):
                     img_file = img_files[d_idx]
@@ -166,7 +165,7 @@ class RefinedZJUMoCapDataset(Dataset):
             'faces': self.faces,
             'posedirs': self.posedirs,
             'J_regressor': self.J_regressor,
-            'cameras_extent': 3.469298553466797, # hardcoded, used to scale the threshold for scaling/image-space gradient
+            'cameras_extent': 1, # 3.469298553466797, # hardcoded, used to scale the threshold for scaling/image-space gradient
             'frame_dict': frame_dict,
         }
         self.metadata.update(cano_data)
@@ -207,7 +206,7 @@ class RefinedZJUMoCapDataset(Dataset):
         coord_max = np.max(vertices, axis=0)
         coord_min = np.min(vertices, axis=0)
         padding_ratio = self.cfg.padding
-        padding_ratio = np.array(padding_ratio, dtype=np.float)
+        padding_ratio = np.array(padding_ratio, dtype=np.float32)
         padding = (coord_max - coord_min) * padding_ratio
         coord_max += padding
         coord_min -= padding
@@ -264,10 +263,10 @@ class RefinedZJUMoCapDataset(Dataset):
         mask_file = data_dict['mask_file']
         model_file = data_dict['model_file']
 
-        K = np.array(self.cameras[cam_name]['K'], dtype=np.float32).copy()
-        dist = np.array(self.cameras[cam_name]['D'], dtype=np.float32).ravel()
-        R = np.array(self.cameras[cam_name]['R'], np.float32)
-        T = np.array(self.cameras[cam_name]['T'], np.float32)
+        K = np.array(self.cameras['K'][cam_idx], dtype=np.float32).copy()
+        dist = np.array(self.cameras['D'][cam_idx], dtype=np.float32).ravel()
+        R = np.array(self.cameras['R'][cam_idx], np.float32)
+        T = np.array(self.cameras['T'][cam_idx], np.float32)
 
         # note that in ZJUMoCap the camera center does not align perfectly
         # here we try to offset it by modifying the extrinsic...

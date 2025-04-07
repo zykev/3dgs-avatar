@@ -140,10 +140,14 @@ class HannwMLP(NonRigidDeform):
         xyz = gaussians.get_xyz
         xyz_norm = self.aabb.normalize(xyz, sym=True)
         deformed_gaussians = gaussians.clone()
+
+
         deltas = self.mlp(xyz_norm, iteration, cond=pose_feat)
 
         if iteration < self.cfg.mlp.embedder.kick_in_iter:
             deltas = deltas * torch.zeros_like(deltas)
+        else:
+            pass
 
         delta_xyz = deltas[:, :3]
         delta_scale = deltas[:, 3:6]
@@ -176,9 +180,27 @@ class HannwMLP(NonRigidDeform):
 
         if compute_loss:
             # regularization
-            loss_xyz = torch.norm(delta_xyz, p=2, dim=1).mean()
-            loss_scale = torch.norm(delta_scale, p=1, dim=1).mean()
-            loss_rot = torch.norm(delta_rot, p=1, dim=1).mean()
+            # if torch.isnan(delta_xyz).any():
+            #     raise ValueError("NaN in delta_xyz")
+            # if torch.isnan(delta_scale).any():
+            #     raise ValueError("NaN in delta_scale")
+            # if torch.isnan(delta_rot).any():
+            #     raise ValueError("NaN in delta_rot")
+            
+
+            loss_xyz = torch.norm(delta_xyz + 1e-8, p=2, dim=1).mean()
+            loss_scale = torch.norm(delta_scale + 1e-8, p=1, dim=1).mean()
+            loss_rot = torch.norm(delta_rot + 1e-8, p=1, dim=1).mean()
+
+
+            # if torch.isnan(loss_xyz).any():
+            #     raise ValueError("NaN in loss_xyz")
+            # if torch.isnan(loss_scale).any():
+            #     raise ValueError("NaN in loss_scale")
+            # if torch.isnan(loss_rot).any():
+            #     raise ValueError("NaN in loss_rot")
+            
+
             loss_reg = {
                 'nr_xyz': loss_xyz,
                 'nr_scale': loss_scale,
