@@ -1,0 +1,13 @@
+# @package _global_
+
+texture_name: rgb
+
+model:
+  gaussian:
+    use_sh: false
+    feature_dim: 3 # specify when use_sh is false
+    
+  texture:
+    name: rgb
+
+

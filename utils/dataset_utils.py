@@ -1,6 +1,10 @@
 import math
 import numpy as np
 import torch
+import torch.nn.functional as F
+import cv2
+import os
+
 from scipy.spatial.transform import Rotation
 from scene.gaussian_model import BasicPointCloud
 from plyfile import PlyData, PlyElement
@@ -157,3 +161,114 @@ class AABB(torch.nn.Module):
 
     def scale(self):
         return math.sqrt((self.volume_scale() ** 2).sum() / 3.)
+
+
+def preprocess_image(img_file, K, D, img_size, white_bg=False, pca_components=48):
+
+    mask_file = img_file.replace('images', 'mask').replace('.jpg', '.png')
+    feature_file = img_file.replace('images', 'feat').replace('.jpg', '.npy')
+    seglabel_file = img_file.replace('images', 'seg').replace('.jpg', '.npy')
+    depth_file = img_file.replace('images', 'depth').replace('.jpg', '.npy')
+    normal_file = img_file.replace('images', 'normal').replace('.jpg', '.npy')
+
+    # image & mask
+    image = cv2.cvtColor(cv2.imread(img_file), cv2.COLOR_BGR2RGB)
+    mask = cv2.imread(mask_file, cv2.IMREAD_GRAYSCALE)
+    image = cv2.undistort(image, K, D, None)
+    mask = cv2.undistort(mask, K, D, None)
+
+    image = cv2.resize(image, img_size, interpolation=cv2.INTER_LINEAR)
+    mask = cv2.resize(mask, img_size, interpolation=cv2.INTER_NEAREST)
+
+    mask = mask != 0
+    image[~mask] = 255. if white_bg else 0.
+    image = image / 255.
+
+    image = torch.from_numpy(image).permute(2, 0, 1).float()
+    mask = torch.from_numpy(mask).unsqueeze(0).float()
+
+    # segmentation label
+    seg_label = None
+    if os.path.exists(seglabel_file):
+        seg_logits = torch.from_numpy(np.load(seglabel_file))  # (28, h, w)
+        seg_logits = F.interpolate(seg_logits.unsqueeze(0), size=img_size, mode="bilinear").squeeze(0)
+        seg_label = seg_logits.argmax(dim=0, keepdim=True)  # (1, new_h, new_w)
+        seg_label = seg_label.long() 
+    
+    # depth
+    depth = None
+    if os.path.exists(depth_file):
+        depth = torch.from_numpy(np.load(depth_file))  # (h, w)
+        depth = F.interpolate(depth.unsqueeze(0), size=img_size, mode="bilinear").squeeze(0)
+
+    # normal
+    normal = None
+    if os.path.exists(normal_file):
+        normal = torch.from_numpy(np.load(normal_file)).permute(2, 0, 1)  # (3, h, w)
+        normal = F.interpolate(normal.unsqueeze(0), size=img_size, mode="bilinear").squeeze(0)
+
+    # semantic feature
+    semantic_feature = torch.from_numpy(np.load(feature_file))
+    semantic_feature = pca_feature(semantic_feature, mask, mask_resize_shape=(1024, 1024), downsample_size=16, pca_components=pca_components)
+    semantic_feature = F.interpolate(semantic_feature.unsqueeze(0), size=img_size, mode="bilinear").squeeze(0)  # (C, new_h, new_w)
+
+    return image, mask, semantic_feature, seg_label, depth, normal
+
+def pca_feature(feature_map, mask, mask_resize_shape=(1024, 1024), downsample_size=16, pca_components=48):
+    """
+    使用 PyTorch 进行 PCA 并应用到前景区域。
+
+    Args:
+        feature_map (torch.Tensor): (C, H, W) 形状的特征图
+        mask (torch.Tensor): (1, H, W) 形状的掩码
+        mask_resize_shape (tuple): 插值后的尺寸
+        downsample_size (int): 池化下采样尺寸
+        pca_components (int): PCA 维度
+
+    Returns:
+        torch.Tensor: (C_pca, H, W) 形状的 PCA 特征图
+    """
+
+    # 处理 mask，生成 feature_mask
+    if mask.shape[-1] != feature_map.shape[-1]:
+        mask = mask.unsqueeze(0).float()  # (1, 1, H, W)
+        if mask.shape[-2:] != mask_resize_shape:
+            mask = F.interpolate(mask, size=mask_resize_shape, mode='nearest')
+        feature_mask = F.avg_pool2d(mask, kernel_size=downsample_size, stride=downsample_size)
+        feature_mask = (feature_mask > 0.5).squeeze(0).squeeze(0)  # (h, w)
+    else:
+        feature_mask = mask.squeeze(0).bool()
+    
+    # 处理 feature_map
+    feature_map = feature_map.permute(1, 2, 0)  # (C, H, W) -> (H, W, C)
+    h, w, c = feature_map.shape
+    feature_map_flat = feature_map.reshape(-1, c)  # (H*W, C)
+
+    # 仅对前景特征应用 PCA
+    feature_mask_flat = feature_mask.flatten()
+    fg_features = feature_map_flat[feature_mask_flat]  # 仅保留前景区域
+
+    if pca_components > 0:
+        U, S, V = torch.pca_lowrank(fg_features, q=pca_components, center=True)
+        pca_features = torch.matmul(fg_features - fg_features.mean(dim=0), V)  # (num_fg, pca_components)
+
+        # 归一化 (Min-Max Scaling)
+        min_vals, max_vals = pca_features.min(dim=0)[0], pca_features.max(dim=0)[0]
+        pca_features = (pca_features - min_vals) / (max_vals - min_vals + 1e-6)  # 避免除 0
+        pca_features = pca_features.clamp(0.0, 1.0)
+
+        # 生成 PCA 特征图
+        pca_feature_map = torch.zeros((h * w, pca_components), device=feature_map.device)
+        pca_feature_map[feature_mask_flat] = pca_features
+        pca_feature_map = pca_feature_map.reshape(h, w, pca_components)
+        pca_feature_map = pca_feature_map.permute(2, 0, 1)  # (H, W, C) -> (C, H, W)
+
+    
+    else:
+        pca_feature_map = torch.zeros((h * w, c), device=feature_map.device)
+        pca_feature_map[feature_mask_flat] = fg_features
+        pca_feature_map = pca_feature_map.reshape(h, w, c)
+        pca_feature_map = pca_feature_map.permute(2, 0, 1)  # (H, W, C) -> (C, H, W)
+
+
+    return pca_feature_map

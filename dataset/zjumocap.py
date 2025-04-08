@@ -244,7 +244,7 @@ class ZJUMoCapDataset(Dataset):
         # final bone transforms that transforms the canonical Vitruvian-pose mesh to the posed mesh
         transforms_mat_02v_inv = torch.linalg.inv(self.metadata['transforms_mat_02v'])
         transforms_mat = torch.matmul(transforms_mat, transforms_mat_02v_inv)
-        transforms_mat[:, :3, 3] += new_trans  # add global offset
+        # transforms_mat[:, :3, 3] += new_trans  # add global offset
 
         # Compute bounding box and padding
         coord_max = torch.max(body.vertices[0], dim=0)[0]

@@ -1,0 +1,18 @@
+# @package _global_
+
+updater_name: gaussian_mlp
+
+model:
+  updater:
+    name: gaussian_mlp
+    
+    triplane_body:
+        feature_dim: ${model.gaussian.latent_feature_dim} # gaussian feature dim (per plane)
+        res: 128
+        trainable: true
+        device: cuda
+
+    property_predictor:
+        n_features: ${model.gaussian.latent_feature_dim} # gaussian feature dim (per plane)
+        apperance_hidden_dim: 64
+        geometry_hidden_dim: 128

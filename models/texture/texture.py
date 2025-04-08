@@ -5,6 +5,7 @@ from utils.sh_utils import eval_sh, eval_sh_bases, augm_rots
 from utils.general_utils import build_rotation
 from models.network_utils import VanillaCondMLP
 
+
 class ColorPrecompute(nn.Module):
     def __init__(self, cfg, metadata):
         super().__init__()
@@ -13,6 +14,17 @@ class ColorPrecompute(nn.Module):
 
     def forward(self, gaussians, camera):
         raise NotImplementedError
+
+class RGB(ColorPrecompute):
+    def __init__(self, cfg, metadata):
+        super().__init__(cfg, metadata)
+        
+    def forward(self, gaussians_body, camera):
+        # gaussians分为body和cloth, body的部分直接赋值color precomp, cloth的部分需要计算color precomp
+        features = gaussians_body.get_features
+        colors_precomp_body = features.squeeze(-1)
+
+        return colors_precomp_body
 
 class SH2RGB(ColorPrecompute):
     def __init__(self, cfg, metadata):
@@ -129,5 +141,6 @@ def get_texture(cfg, metadata):
     model_dict = {
         "sh2rgb": SH2RGB,
         "mlp": ColorMLP,
+        "rgb": RGB,
     }
     return model_dict[name](cfg, metadata)

@@ -1,10 +1,11 @@
 defaults:
   - _self_
-  - dataset: zjumocap_386_mono # zjumocap_377_mono
+  - dataset: zjumocap_377_mono # zjumocap_377_mono
   - pose_correction: none # direct
-  - texture: sh # shallow_mlp
+  - texture: rgb # shallow_mlp
   - rigid: skinning_field
   - non_rigid: hannw_mlp #hashgrid
+  - updater: gaussian_mlp
   - option:
       - iter15k
 
@@ -19,9 +20,13 @@ tag: default
 
 model:
   gaussian:
-    use_sh: true
+    use_sh: false
     sh_degree: 3
     delay: 1000
+    feature_dim: 3 # specify when use_sh is false
+    latent_feature_dim: 32
+    device: cuda
+  
   pose_correction:
     name: direct
   deformer:
@@ -29,9 +34,11 @@ model:
       name: identity
     non_rigid:
       name: identity
+  updater:
+    name: gaussian_mlp
 
 dataset:
-  preload: true
+  preload: false
   train_smpl: false
 
   mode: ${mode}

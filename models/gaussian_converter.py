@@ -4,13 +4,14 @@ import numpy as np
 from .deformer import get_deformer
 from .pose_correction import get_pose_correction
 from .texture import get_texture
-
+from .updater import get_updater
 class GaussianConverter(nn.Module):
     def __init__(self, cfg, metadata):
         super().__init__()
         self.cfg = cfg
         self.metadata = metadata
 
+        self.updater = get_updater(cfg.model.updater, metadata)
         self.pose_correction = get_pose_correction(cfg.model.pose_correction, metadata)
         self.deformer = get_deformer(cfg.model.deformer, metadata)
         self.texture = get_texture(cfg.model.texture, metadata)
@@ -20,6 +21,7 @@ class GaussianConverter(nn.Module):
 
     def set_optimizer(self):
         opt_params = [
+            {'params': self.updater.parameters(), 'lr': self.cfg.opt.get('updater_lr', 0.)},
             {'params': self.deformer.rigid.parameters(), 'lr': self.cfg.opt.get('rigid_lr', 0.)},
             # {'params': self.deformer.non_rigid.parameters(), 'lr': self.cfg.opt.get('non_rigid_lr', 0.)},
             {'params': [p for n, p in self.deformer.non_rigid.named_parameters() if 'latent' not in n],
@@ -40,6 +42,9 @@ class GaussianConverter(nn.Module):
     def forward(self, gaussians, camera, iteration, compute_loss=True):
         loss_reg = {}
         # loss_reg.update(gaussians.get_opacity_loss())
+
+        updated_gaussians = self.updater(gaussians, camera, iteration)
+
         camera, loss_reg_pose = self.pose_correction(camera, iteration)
 
         # pose augmentation
@@ -48,7 +53,7 @@ class GaussianConverter(nn.Module):
             camera = camera.copy()
             camera.rots = camera.rots + torch.randn(camera.rots.shape, device=camera.rots.device) * pose_noise
 
-        deformed_gaussians, loss_reg_deformer = self.deformer(gaussians, camera, iteration, compute_loss)
+        deformed_gaussians, loss_reg_deformer = self.deformer(updated_gaussians, camera, iteration, compute_loss)
 
         loss_reg.update(loss_reg_pose)
         loss_reg.update(loss_reg_deformer)

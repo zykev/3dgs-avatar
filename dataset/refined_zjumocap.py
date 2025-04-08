@@ -7,20 +7,24 @@ import numpy as np
 import json
 from utils.dataset_utils import get_02v_bone_transforms, fetchPly, storePly, AABB
 from scene.cameras import Camera
+from utils.dataset_utils import preprocess_image
 
 
 import torch
 from torch.utils.data import Dataset
 from scipy.spatial.transform import Rotation
 import trimesh
+from smpl_loader.body_model import SMPLLayer
 
 class RefinedZJUMoCapDataset(Dataset):
     def __init__(self, cfg, split='train'):
         super().__init__()
         self.cfg = cfg
         self.split = split
+        self.device = cfg.device
 
-        self.root_dir = '.datasets/zjumocap/'
+
+        self.root_dir = cfg.root_dir
         self.subject = cfg.subject
         self.train_frames = cfg.train_frames
         self.train_cams = cfg.train_views
@@ -33,220 +37,227 @@ class RefinedZJUMoCapDataset(Dataset):
         ann_file = os.path.join(self.root_dir, self.subject, 'annots.npy')
         annots = np.load(ann_file, allow_pickle=True).item()
         self.cameras = annots['cams']
-        num_cams = len(self.cameras['K'])
 
-        self.faces = np.load('.datasets/body_models/misc/faces.npz')['faces']
-        self.skinning_weights = dict(np.load('.datasets/body_models/misc/skinning_weights_all.npz'))
-        self.posedirs = dict(np.load('.datasets/body_models/misc/posedirs_all.npz'))
-        self.J_regressor = dict(np.load('.datasets/body_models/misc/J_regressors.npz'))
+        self.body_model = SMPLLayer(model_path='.datasets/body_models/smpl/neutral/model.pkl', gender='neutral')
+        self.load_cano_smpl_flag = False
 
+        
         if split == 'train':
             cam_names = self.train_cams
             frames = self.train_frames
         elif split == 'val':
             cam_names = self.val_cams
             frames = self.val_frames
-        elif split == 'test':
-            cam_names = self.cfg.test_views[self.cfg.test_mode]
-            frames = self.cfg.test_frames[self.cfg.test_mode]
-        elif split == 'predict':
-            cam_names = self.cfg.predict_views
-            frames = self.cfg.predict_frames
+
         else:
             raise ValueError
 
-        # if len(cam_names) == 0:
-        #     cam_names = list(range(num_cams))
-        # else:
-        #     cam_names = [int(cams) - 1 for cams in cam_names]
-
+        self.subject_dir = os.path.join(self.root_dir, self.subject)
         start_frame, end_frame, sampling_rate = frames
 
-        subject_dir = os.path.join(self.root_dir, self.subject)
-        if split == 'predict':
-            predict_seqs = ['gBR_sBM_cAll_d04_mBR1_ch05_view1',
-                            'gBR_sBM_cAll_d04_mBR1_ch06_view1',
-                            'MPI_Limits-03099-op8_poses_view1',
-                            'canonical_pose_view1',]
-            predict_seq = self.cfg.get('predict_seq', 0)
-            predict_seq = predict_seqs[predict_seq]
-            model_files = sorted(glob.glob(os.path.join(subject_dir, predict_seq, '*.npz')))
-            self.model_files = model_files
-            frames = list(reversed(range(-len(model_files), 0)))
-            if end_frame == 0:
-                end_frame = len(model_files)
-            frame_slice = slice(start_frame, end_frame, sampling_rate)
-            model_files = model_files[frame_slice]
-            frames = frames[frame_slice]
-        else:
-            if self.cfg.get('arah_opt', False):
-                model_files = sorted(glob.glob(os.path.join(subject_dir, 'opt_models/*.npz')))
-            else:
-                model_files = sorted(glob.glob(os.path.join(subject_dir, 'models/*.npz')))
-            self.model_files = model_files
-            frames = list(range(len(model_files)))
-            if end_frame == 0:
-                end_frame = len(model_files)
-            frame_slice = slice(start_frame, end_frame, sampling_rate)
-            model_files = model_files[frame_slice]
-            frames = frames[frame_slice]
+        frame_slice = slice(start_frame, end_frame, sampling_rate)
+        frames = list(range(len(os.listdir(os.path.join(self.subject_dir, 'smpl_params')))))
+        frames = frames[frame_slice]
 
-        self.data = []
-        if split == 'predict':
-            for cam_idx, cam_name in enumerate(cam_names):
-                cam_dir = os.path.join(subject_dir, cam_name)
-
-                for d_idx, f_idx in enumerate(frames):
-                    model_file = model_files[d_idx]
-                    # get dummy gt...
-                    img_file = glob.glob(os.path.join(cam_dir, '*.jpg'))[0]
-                    mask_file = glob.glob(os.path.join(cam_dir, '*.png'))[0]
-
-                    self.data.append({
-                        'cam_idx': cam_idx,
-                        'cam_name': cam_name,
-                        'data_idx': d_idx,
-                        'frame_idx': f_idx,
-                        'img_file': img_file,
-                        'mask_file': mask_file,
-                        'model_file': model_file,
-                    })
-        else:
-            for cam_idx, cam_name in enumerate(cam_names):
-                img_files = sorted(glob.glob(os.path.join(subject_dir, f'images/{cam_name}', '*.jpg')))[frame_slice]
-                mask_files = sorted(glob.glob(os.path.join(subject_dir, f'mask/{cam_name}', '*.png')))[frame_slice]
-
-                for d_idx, f_idx in enumerate(frames):
-                    img_file = img_files[d_idx]
-                    mask_file = mask_files[d_idx]
-                    model_file = model_files[d_idx]
-
-                    self.data.append({
-                        'cam_idx': cam_idx,
-                        'cam_name': cam_name,
-                        'data_idx': d_idx,
-                        'frame_idx': f_idx,
-                        'img_file': img_file,
-                        'mask_file': mask_file,
-                        'model_file': model_file,
-                    })
-
-        self.frames = frames
-        self.model_files_list = model_files
+        self.frame_dict = {
+            frame: i for i, frame in enumerate(frames)
+        }
 
         self.get_metadata()
+        
+
+
+        self.data = []
+        
+        for cam_idx, cam_name in enumerate(cam_names):
+            img_files = sorted(glob.glob(os.path.join(self.subject_dir, f'images/{cam_name}', '*.jpg')))[frame_slice]
+            # mask_files = sorted(glob.glob(os.path.join(self.subject_dir, f'mask/{cam_name}', '*.png')))[frame_slice]
+
+            for d_idx, f_idx in enumerate(frames):
+                img_file = img_files[d_idx]
+                # mask_file = mask_files[d_idx]
+
+                if cam_idx == 0:
+                    smpl_data = self.get_smpl_data(img_file)
+                
+                # collect camera parameters K, D, R, T
+                # cam_idx = cam_idxs[frame_index][view_index]
+                K = np.array(annots['cams']['K'][cam_idx], dtype=np.float32)
+                D = np.array(annots['cams']['D'][cam_idx], dtype=np.float32)
+                R = np.array(annots['cams']['R'][cam_idx], dtype=np.float32)
+                T = np.array(annots['cams']['T'][cam_idx], dtype=np.float32) / 1000.
+
+                cam_params = {'K': K, 'D': D, 'R': R, 'T': T}
+
+                self.data.append({
+                    'cam_idx': cam_idx,
+                    'cam_name': cam_name,
+                    'data_idx': d_idx,
+                    'frame_idx': f_idx,
+                    'img_file': img_file,
+                    # 'mask_file': mask_file,
+                    'cam_params': cam_params,
+                    'smpl_data': smpl_data,
+                })
+
+
 
         self.preload = cfg.get('preload', True)
         if self.preload:
             self.cameras = [self.getitem(idx) for idx in range(len(self))]
 
-
     def get_metadata(self):
-        data_paths = self.model_files
-        data_path = data_paths[0]
-
-        cano_data = self.get_cano_smpl_verts(data_path)
-        if self.split != 'train':
-            self.metadata = cano_data
-            return
-
-        start, end, step = self.train_frames
-        frames = list(range(len(data_paths)))
-        if end == 0:
-            end = len(frames)
-        frame_slice = slice(start, end, step)
-        frames = frames[frame_slice]
-
-        frame_dict = {
-            frame: i for i, frame in enumerate(frames)
-        }
 
         self.metadata = {
-            'faces': self.faces,
-            'posedirs': self.posedirs,
-            'J_regressor': self.J_regressor,
-            'cameras_extent': 1, # 3.469298553466797, # hardcoded, used to scale the threshold for scaling/image-space gradient
-            'frame_dict': frame_dict,
+            'v_template': self.body_model.v_template.to(self.device),
+            'faces': self.body_model.faces_tensor.to(self.device),
+            'shapedirs': self.body_model.shapedirs.to(self.device),
+            'posedirs': self.body_model.posedirs.to(self.device),
+            'J_regressor': self.body_model.J_regressor.to(self.device),
+            'skinning_weights': self.body_model.lbs_weights.to(self.device),
+            'kintree_parents': self.body_model.kintree_parents.to(self.device),
+            'cameras_extent': 3.469298553466797, # hardcoded, used to scale the threshold for scaling/image-space gradient
+            'frame_dict': self.frame_dict,
+            'img_hw': (self.h, self.w),
         }
-        self.metadata.update(cano_data)
-        if self.cfg.train_smpl:
-            self.metadata.update(self.get_smpl_data())
 
-    def get_cano_smpl_verts(self, data_path):
+    
+    def get_cano_smpl_verts(self, minimal_shape):
         '''
             Compute star-posed SMPL body vertices.
             To get a consistent canonical space,
             we do not add pose blend shape
         '''
-        # compute scale from SMPL body
-        model_dict = np.load(data_path)
-        gender = 'neutral'
 
-        # 3D models and points
-        minimal_shape = model_dict['minimal_shape']
-        # Break symmetry if given in float16:
-        if minimal_shape.dtype == np.float16:
-            minimal_shape = minimal_shape.astype(np.float32)
-            minimal_shape += 1e-4 * np.random.randn(*minimal_shape.shape)
+        # Break symmetry if given in float16
+        if minimal_shape.dtype == torch.float16:
+            minimal_shape = minimal_shape.to(torch.float32)
+            minimal_shape += 1e-4 * torch.randn_like(minimal_shape)
         else:
-            minimal_shape = minimal_shape.astype(np.float32)
+            minimal_shape = minimal_shape.to(torch.float32)
 
-        # Minimally clothed shape
-        J_regressor = self.J_regressor[gender]
-        Jtr = np.dot(J_regressor, minimal_shape)
+        # Minimally clothed shape (minimal body shape)
+        J_regressor = self.body_model.J_regressor  # Assuming this is a torch tensor
+        Jtr = torch.matmul(J_regressor, minimal_shape)
 
-        skinning_weights = self.skinning_weights[gender]
         # Get bone transformations that transform a SMPL A-pose mesh
-        # to a star-shaped A-pose (i.e. Vitruvian A-pose)
-        bone_transforms_02v = get_02v_bone_transforms(Jtr)
+        skinning_weights = self.body_model.lbs_weights  # Assuming this is a torch tensor
+        
+        transforms_mat_02v = get_02v_bone_transforms(Jtr)
+        T = torch.matmul(skinning_weights, transforms_mat_02v.reshape([-1, 16])).reshape([-1, 4, 4])
+        vertices = torch.matmul(T[:, :3, :3], minimal_shape[..., None]).squeeze(-1) + T[:, :3, -1]
 
-        T = np.matmul(skinning_weights, bone_transforms_02v.reshape([-1, 16])).reshape([-1, 4, 4])
-        vertices = np.matmul(T[:, :3, :3], minimal_shape[..., np.newaxis]).squeeze(-1) + T[:, :3, -1]
-
-        coord_max = np.max(vertices, axis=0)
-        coord_min = np.min(vertices, axis=0)
-        padding_ratio = self.cfg.padding
-        padding_ratio = np.array(padding_ratio, dtype=np.float32)
-        padding = (coord_max - coord_min) * padding_ratio
+        # Compute bounding box and padding
+        # vertices = minimal_shape
+        coord_max = torch.max(vertices, dim=0)[0]
+        coord_min = torch.min(vertices, dim=0)[0]
+        # padding_ratio = torch.tensor(self.cfg.padding, dtype=torch.float32)
+        # padding = (coord_max - coord_min) * padding_ratio
+        padding = self.cfg.padding
         coord_max += padding
         coord_min -= padding
 
-        cano_mesh = trimesh.Trimesh(vertices=vertices.astype(np.float32), faces=self.faces)
+        # Create the canonical mesh
+        cano_mesh = trimesh.Trimesh(vertices=vertices.numpy(), 
+                                    faces=self.body_model.faces_tensor.numpy())
 
-        return {
-            'gender': gender,
-            'smpl_verts': vertices.astype(np.float32),
-            'minimal_shape': minimal_shape,
-            'Jtr': Jtr,
-            'skinning_weights': skinning_weights.astype(np.float32),
-            'bone_transforms_02v': bone_transforms_02v,
-            'cano_mesh': cano_mesh,
+        # Center minimal shape and normalize
+        center = torch.mean(minimal_shape, dim=0)
+        minimal_shape_centered = minimal_shape - center
+        cano_max = torch.max(minimal_shape_centered, dim=0)[0]
+        cano_min = torch.min(minimal_shape_centered, dim=0)[0]
+        padding = (cano_max - cano_min) * 0.05
 
-            'coord_min': coord_min,
-            'coord_max': coord_max,
-            'aabb': AABB(coord_max, coord_min),
-        }
+        # Compute pose condition (normalize joint position)
+        Jtr_norm = Jtr - center
+        Jtr_norm = (Jtr_norm - cano_min + padding) / (cano_max - cano_min) / 1.1
+        Jtr_norm -= 0.5
+        Jtr_norm *= 2.0
 
-    def get_smpl_data(self):
-        # load all smpl fitting of the training sequence
-        if self.split != 'train':
-            return {}
+        self.metadata.update({
+            'cano_verts': vertices.to(self.device),
+            'Jtr': Jtr.to(self.device),  # joint position under minimal shape in canonical space
+            'Jtr_norm': Jtr_norm.unsqueeze(0).to(self.device),  # normalized joint position under minimal shape in canonical space
+            'cano_mesh': cano_mesh,  # You can handle meshes with torch3d later if needed
+            'aabb': AABB(coord_max.to(self.device), coord_min.to(self.device)),  # Assuming AABB is a class that accepts torch tensors
+            'transforms_mat_02v': transforms_mat_02v,
+        })
 
-        from collections import defaultdict
-        smpl_data = defaultdict(list)
 
-        for idx, (frame, model_file) in enumerate(zip(self.frames, self.model_files_list)):
-            model_dict = np.load(model_file)
+    def get_smpl_data(self, image_path):
+        frame_idx = int(os.path.basename(image_path)[:-4])
+        smpl_param_path = os.path.join(self.subject_dir, "smpl_params", '{}.npy'.format(frame_idx))
+        smpl_params = np.load(smpl_param_path, allow_pickle=True).item()
 
-            if idx == 0:
-                smpl_data['betas'] = model_dict['betas'].astype(np.float32)
+        betas = np.array(smpl_params['shapes'], dtype=np.float32) # (1, 10)
+        betas = torch.from_numpy(betas)
 
-            smpl_data['frames'].append(frame)
-            smpl_data['root_orient'].append(model_dict['root_orient'].astype(np.float32))
-            smpl_data['pose_body'].append(model_dict['pose_body'].astype(np.float32))
-            smpl_data['pose_hand'].append(model_dict['pose_hand'].astype(np.float32))
-            smpl_data['trans'].append(model_dict['trans'].astype(np.float32))
+        root_orient = np.array(smpl_params['Rh'], dtype=np.float32).reshape([-1, 3])
+        root_orient = torch.from_numpy(root_orient)
 
+        poses = np.array(smpl_params['poses'], dtype=np.float32) # (1, 72)
+        body_poses = poses[:, 3:].copy()
+        body_poses = torch.from_numpy(body_poses)
+
+        # get relative rotation matrix
+        poses_all = torch.cat([root_orient, body_poses], dim=-1)
+        poses_all = Rotation.from_rotvec(poses_all.reshape(-1, 3).numpy()).as_matrix() # 24 x 3 x 3
+        pose_mat = poses_all[1:, ...].copy()  # 23 x 3 x 3
+        pose_mat = np.concatenate([np.expand_dims(np.eye(3), axis=0), pose_mat], axis=0).reshape(
+            [-1, 9])  # 24 x 9, root rotation is set to identity
+        poses_all = torch.from_numpy(pose_mat).to(torch.float32)  # 24 x 9, not including root rotation
+        
+        # poses_all = torch.from_numpy(poses_all.reshape([-1, 9])).to(torch.float32)  # 24 x 9, including root rotation
+
+        trans = np.array(smpl_params['Th'], dtype=np.float32).reshape([1, 3])
+        trans = torch.from_numpy(trans)
+
+        # Get shape vertices
+        if not self.load_cano_smpl_flag:
+            body = self.body_model(betas=betas)
+            minimal_shape = body.vertices.detach()[0]
+            self.get_cano_smpl_verts(minimal_shape)
+            self.load_cano_smpl_flag = True
+
+        # Get corrected translation
+        body = self.body_model(global_orient=root_orient, 
+                               body_pose=body_poses, 
+                               betas=betas, 
+                               transl=trans)
+
+        body_wo_global_orient = self.body_model(body_pose=body_poses, betas=betas, transl=trans)
+
+
+
+        vertices = body.vertices[0]
+        vertices_wo_global_orient = body_wo_global_orient.vertices[0]
+        new_trans = trans + (vertices_wo_global_orient - vertices).mean(0, keepdims=True)
+
+        # get transformation matrix
+        body = self.body_model(global_orient=root_orient, body_pose=body_poses, betas=betas, transl=new_trans)
+        transforms_mat = body.transforms_mat[0]
+
+        # final bone transforms that transforms the canonical Vitruvian-pose mesh to the posed mesh
+        transforms_mat_02v_inv = torch.linalg.inv(self.metadata['transforms_mat_02v'])
+        transforms_mat = torch.matmul(transforms_mat, transforms_mat_02v_inv)
+        # transforms_mat[:, :3, 3] += new_trans  # add global offset
+
+        # Compute bounding box and padding
+        coord_max = torch.max(body.vertices[0], dim=0)[0]
+        coord_min = torch.min(body.vertices[0], dim=0)[0]
+        padding = self.cfg.padding
+        coord_max += padding
+        coord_min -= padding
+        
+        smpl_data = {'frame': frame_idx,
+                    #  'minimal_shape': minimal_shape,
+                     'betas': betas, 
+                     'transforms_mat': transforms_mat,
+                     'trans': new_trans.unsqueeze(0), 
+                     'poses': poses_all.unsqueeze(0),
+                     'coord_bound': (coord_min, coord_max)
+                     }
+        
         return smpl_data
 
     def __len__(self):
@@ -260,14 +271,16 @@ class RefinedZJUMoCapDataset(Dataset):
         data_idx = data_dict['data_idx']
         frame_idx = data_dict['frame_idx']
         img_file = data_dict['img_file']
-        mask_file = data_dict['mask_file']
-        model_file = data_dict['model_file']
+        # mask_file = data_dict['mask_file']
+        cam_params = data_dict['cam_params']
+        smpl_data = data_dict['smpl_data']
 
-        K = np.array(self.cameras['K'][cam_idx], dtype=np.float32).copy()
-        dist = np.array(self.cameras['D'][cam_idx], dtype=np.float32).ravel()
-        R = np.array(self.cameras['R'][cam_idx], np.float32)
-        T = np.array(self.cameras['T'][cam_idx], np.float32)
+        K = cam_params['K'].copy()
+        D = cam_params['D'].ravel()
+        R = cam_params['R']
+        T = cam_params['T']
 
+        
         # note that in ZJUMoCap the camera center does not align perfectly
         # here we try to offset it by modifying the extrinsic...
         M = np.eye(3)
@@ -276,28 +289,33 @@ class RefinedZJUMoCapDataset(Dataset):
         K[0, 2] = self.W / 2
         K[1, 2] = self.H / 2
         R = M @ R
-        T = M @ T
+        T = M @ T.reshape(3, 1)
 
         R = np.transpose(R)
-        T = T[:, 0]
+        # T = T[:, 0]
 
-        image = cv2.cvtColor(cv2.imread(img_file), cv2.COLOR_BGR2RGB)
-        mask = cv2.imread(mask_file, cv2.IMREAD_GRAYSCALE)
-        image = cv2.undistort(image, K, dist, None)
-        mask = cv2.undistort(mask, K, dist, None)
+        # load segmentation label, depth and normal
+        image, mask, semantic_feature, seg_label, depth, normal = preprocess_image(img_file, K, D, (self.w, self.h), self.white_bg, self.cfg.get('pca_components', 48))
 
-        lanczos = self.cfg.get('lanczos', False)
-        interpolation = cv2.INTER_LANCZOS4 if lanczos else cv2.INTER_LINEAR
+        # image = cv2.cvtColor(cv2.imread(img_file), cv2.COLOR_BGR2RGB)
 
-        image = cv2.resize(image, (self.w, self.h), interpolation=interpolation)
-        mask = cv2.resize(mask, (self.w, self.h), interpolation=cv2.INTER_NEAREST)
 
-        mask = mask != 0
-        image[~mask] = 255. if self.white_bg else 0.
-        image = image / 255.
+        # mask = cv2.imread(mask_file, cv2.IMREAD_GRAYSCALE)
+        # image = cv2.undistort(image, K, D, None)
+        # mask = cv2.undistort(mask, K, D, None)
 
-        image = torch.from_numpy(image).permute(2, 0, 1).float()
-        mask = torch.from_numpy(mask).unsqueeze(0).float()
+        # lanczos = self.cfg.get('lanczos', False)
+        # interpolation = cv2.INTER_LANCZOS4 if lanczos else cv2.INTER_LINEAR
+
+        # image = cv2.resize(image, (self.w, self.h), interpolation=interpolation)
+        # mask = cv2.resize(mask, (self.w, self.h), interpolation=cv2.INTER_NEAREST)
+
+        # mask = mask != 0
+        # image[~mask] = 255. if self.white_bg else 0.
+        # image = image / 255.
+
+        # image = torch.from_numpy(image).permute(2, 0, 1).float()
+        # mask = torch.from_numpy(mask).unsqueeze(0).float()
 
         # update camera parameters
         K[0, :] *= self.w / self.W
@@ -308,51 +326,14 @@ class RefinedZJUMoCapDataset(Dataset):
         FovY = focal2fov(focal_length_y, self.h)
         FovX = focal2fov(focal_length_x, self.w)
 
-        # Compute posed SMPL body
-        minimal_shape = self.metadata['minimal_shape']
-        gender = self.metadata['gender']
+        # get smpl data
+        betas = smpl_data['betas']
+        trans = smpl_data['trans']
+        rots = smpl_data['poses']
+        transforms_mat = smpl_data['transforms_mat']
 
-        model_dict = np.load(model_file)
-        n_smpl_points = minimal_shape.shape[0]
-        trans = model_dict['trans'].astype(np.float32)
-        bone_transforms = model_dict['bone_transforms'].astype(np.float32)
+
         # Also get GT SMPL poses
-        root_orient = model_dict['root_orient'].astype(np.float32)
-        pose_body = model_dict['pose_body'].astype(np.float32)
-        pose_hand = model_dict['pose_hand'].astype(np.float32)
-        # Jtr_posed = model_dict['Jtr_posed'].astype(np.float32)
-        pose = np.concatenate([root_orient, pose_body, pose_hand], axis=-1)
-        pose = Rotation.from_rotvec(pose.reshape([-1, 3]))
-
-        pose_mat_full = pose.as_matrix()  # 24 x 3 x 3
-        pose_mat = pose_mat_full[1:, ...].copy()  # 23 x 3 x 3
-        pose_rot = np.concatenate([np.expand_dims(np.eye(3), axis=0), pose_mat], axis=0).reshape(
-            [-1, 9])  # 24 x 9, root rotation is set to identity
-        pose_rot_full = pose_mat_full.reshape([-1, 9])  # 24 x 9, including root rotation
-
-        # Minimally clothed shape
-        posedir = self.posedirs[gender]
-        Jtr = self.metadata['Jtr']
-
-        # canonical SMPL vertices without pose correction, to normalize joints
-        center = np.mean(minimal_shape, axis=0)
-        minimal_shape_centered = minimal_shape - center
-        cano_max = minimal_shape_centered.max()
-        cano_min = minimal_shape_centered.min()
-        padding = (cano_max - cano_min) * 0.05
-
-        # compute pose condition
-        Jtr_norm = Jtr - center
-        Jtr_norm = (Jtr_norm - cano_min + padding) / (cano_max - cano_min) / 1.1
-        Jtr_norm -= 0.5
-        Jtr_norm *= 2.
-
-        # final bone transforms that transforms the canonical Vitruvian-pose mesh to the posed mesh
-        # without global translation
-        bone_transforms_02v = self.metadata['bone_transforms_02v']
-        bone_transforms = bone_transforms @ np.linalg.inv(bone_transforms_02v)
-        bone_transforms = bone_transforms.astype(np.float32)
-        bone_transforms[:, :3, 3] += trans  # add global offset
 
         return Camera(
             frame_id=frame_idx,
@@ -362,13 +343,18 @@ class RefinedZJUMoCapDataset(Dataset):
             FoVy=FovY,
             image=image,
             mask=mask,
+            semantic_feature=semantic_feature,
+            seg_label=seg_label,
+            depth=depth,
+            normal=normal,
             gt_alpha_mask=None,
             image_name=f"c{int(cam_name):02d}_f{frame_idx if frame_idx >= 0 else -frame_idx - 1:06d}",
-            data_device=self.cfg.data_device,
+            data_device=self.cfg.device,
             # human params
-            rots=torch.from_numpy(pose_rot).float().unsqueeze(0),
-            Jtrs=torch.from_numpy(Jtr_norm).float().unsqueeze(0),
-            bone_transforms=torch.from_numpy(bone_transforms),
+            betas=betas,
+            rots=rots,
+            bone_transforms=transforms_mat,
+            trans=trans,
         )
 
     def __getitem__(self, idx):
@@ -377,35 +363,35 @@ class RefinedZJUMoCapDataset(Dataset):
         else:
             return self.getitem(idx)
 
-    def readPointCloud(self,):
-        if self.cfg.get('random_init', False):
-            ply_path = os.path.join(self.root_dir, self.subject, 'random_pc.ply')
+    # def readPointCloud(self,):
+    #     if self.cfg.get('random_init', False):
+    #         ply_path = os.path.join(self.root_dir, self.subject, 'random_pc.ply')
 
-            aabb = self.metadata['aabb']
-            coord_min = aabb.coord_min.unsqueeze(0).numpy()
-            coord_max = aabb.coord_max.unsqueeze(0).numpy()
-            n_points = 50_000
+    #         aabb = self.metadata['aabb']
+    #         coord_min = aabb.coord_min.unsqueeze(0).numpy()
+    #         coord_max = aabb.coord_max.unsqueeze(0).numpy()
+    #         n_points = 50_000
 
-            xyz_norm = np.random.rand(n_points, 3)
-            xyz = xyz_norm * coord_min + (1. - xyz_norm) * coord_max
-            rgb = np.ones_like(xyz) * 255
-            storePly(ply_path, xyz, rgb)
+    #         xyz_norm = np.random.rand(n_points, 3)
+    #         xyz = xyz_norm * coord_min + (1. - xyz_norm) * coord_max
+    #         rgb = np.ones_like(xyz) * 255
+    #         storePly(ply_path, xyz, rgb)
 
-            pcd = fetchPly(ply_path)
-        else:
-            ply_path = os.path.join(self.root_dir, self.subject, 'cano_smpl.ply')
-            try:
-                pcd = fetchPly(ply_path)
-            except:
-                verts = self.metadata['smpl_verts']
-                faces = self.faces
-                mesh = trimesh.Trimesh(vertices=verts, faces=faces)
-                n_points = 50_000
+    #         pcd = fetchPly(ply_path)
+    #     else:
+    #         ply_path = os.path.join(self.root_dir, self.subject, 'cano_smpl.ply')
+    #         try:
+    #             pcd = fetchPly(ply_path)
+    #         except:
+    #             verts = self.metadata['smpl_verts']
+    #             faces = self.faces
+    #             mesh = trimesh.Trimesh(vertices=verts, faces=faces)
+    #             n_points = 50_000
 
-                xyz = mesh.sample(n_points)
-                rgb = np.ones_like(xyz) * 255
-                storePly(ply_path, xyz, rgb)
+    #             xyz = mesh.sample(n_points)
+    #             rgb = np.ones_like(xyz) * 255
+    #             storePly(ply_path, xyz, rgb)
 
-                pcd = fetchPly(ply_path)
+    #             pcd = fetchPly(ply_path)
 
-        return pcd
+    #     return pcd

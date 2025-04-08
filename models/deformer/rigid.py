@@ -7,7 +7,7 @@ import pytorch3d.ops as ops
 import trimesh
 import igl
 
-from utils.general_utils import build_rotation
+from utils.general_utils import build_rotation, rotation_matrix_to_quaternion, quaternion_to_rotation_matrix
 from models.network_utils import get_skinning_mlp
 from utils.other_utils import barycentric_coordinates_tri
 
@@ -245,6 +245,7 @@ class SkinningField(RigidDeform):
 
     def forward(self, gaussians, iteration, camera):
         tfs = camera.bone_transforms
+        trans = camera.trans
 
         xyz = gaussians.get_xyz
         n_pts = xyz.shape[0]
@@ -252,18 +253,19 @@ class SkinningField(RigidDeform):
         T_fwd = self.get_forward_transform(xyz_norm, tfs)
 
         deformed_gaussians = gaussians.clone()
-        deformed_gaussians.set_fwd_transform(T_fwd.detach())
+        # deformed_gaussians.set_fwd_transform(T_fwd.detach())
 
         homo_coord = torch.ones(n_pts, 1, dtype=torch.float32, device=xyz.device)
         x_hat_homo = torch.cat([xyz, homo_coord], dim=-1).view(n_pts, 4, 1)
-        x_bar = torch.matmul(T_fwd, x_hat_homo)[:, :3, 0]
+        x_bar = torch.matmul(T_fwd, x_hat_homo)[:, :3, 0] + trans.squeeze(0)
         deformed_gaussians._xyz = x_bar
 
-        rotation_hat = build_rotation(gaussians._rotation)
+        # rotation_hat = build_rotation(gaussians._rotation)
+        rotation_hat = quaternion_to_rotation_matrix(gaussians._rotation.unsqueeze(0)).squeeze(0)
         rotation_bar = torch.matmul(T_fwd[:, :3, :3], rotation_hat)
         setattr(deformed_gaussians, 'rotation_precomp', rotation_bar)
         # deformed_gaussians._rotation = tf.matrix_to_quaternion(rotation_bar)
-        # deformed_gaussians._rotation = rotation_matrix_to_quaternion(rotation_bar)
+        deformed_gaussians._rotation = rotation_matrix_to_quaternion(rotation_bar)
 
         x_bar.register_hook(print_grad('xyz_deform'))
         rotation_bar.register_hook(print_grad('rot_deform'))
