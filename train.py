@@ -178,7 +178,7 @@ def training(config):
         loss.backward()
 
         # if iteration % testing_interval == 0:
-        if iteration == 1200:
+        if iteration % 3000 == 0:
             for name, param in scene.converter.named_parameters():
                 print(f"{name}: requires_grad={param.requires_grad}, grad is None={param.grad is None}")
                 if param.grad is not None:

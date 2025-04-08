@@ -40,7 +40,7 @@ class Camera:
         self.data['camera_center'] = self.world_view_transform.inverse()[3, :3]
 
         self.data['rots'] = self.rots.to(self.data_device)
-        self.data['Jtrs'] = self.Jtrs.to(self.data_device)
+        # self.data['Jtrs'] = self.Jtrs.to(self.data_device)
         self.data['bone_transforms'] = self.bone_transforms.to(self.data_device)
 
 

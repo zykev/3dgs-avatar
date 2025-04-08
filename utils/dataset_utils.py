@@ -6,46 +6,102 @@ from scene.gaussian_model import BasicPointCloud
 from plyfile import PlyData, PlyElement
 
 # add ZJUMoCAP dataloader
-def get_02v_bone_transforms(Jtr,):
-    rot45p = Rotation.from_euler('z', 45, degrees=True).as_matrix()
-    rot45n = Rotation.from_euler('z', -45, degrees=True).as_matrix()
+# def get_02v_bone_transforms(Jtr,):
+    # rot45p = Rotation.from_euler('z', 45, degrees=True).as_matrix()
+    # rot45n = Rotation.from_euler('z', -45, degrees=True).as_matrix()
 
-    # Specify the bone transformations that transform a SMPL A-pose mesh
-    # to a star-shaped A-pose (i.e. Vitruvian A-pose)
-    bone_transforms_02v = np.tile(np.eye(4), (24, 1, 1))
+    # # Specify the bone transformations that transform a SMPL A-pose mesh
+    # # to a star-shaped A-pose (i.e. Vitruvian A-pose)
+    # bone_transforms_02v = np.tile(np.eye(4), (24, 1, 1))
+
+    # # First chain: L-hip (1), L-knee (4), L-ankle (7), L-foot (10)
+    # chain = [1, 4, 7, 10]
+    # rot = rot45p.copy()
+    # for i, j_idx in enumerate(chain):
+    #     bone_transforms_02v[j_idx, :3, :3] = rot
+    #     t = Jtr[j_idx].copy()
+    #     if i > 0:
+    #         parent = chain[i-1]
+    #         t_p = Jtr[parent].copy()
+    #         t = np.dot(rot, t - t_p)
+    #         t += bone_transforms_02v[parent, :3, -1].copy()
+
+    #     bone_transforms_02v[j_idx, :3, -1] = t
+
+    # bone_transforms_02v[chain, :3, -1] -= np.dot(Jtr[chain], rot.T)
+    # # Second chain: R-hip (2), R-knee (5), R-ankle (8), R-foot (11)
+    # chain = [2, 5, 8, 11]
+    # rot = rot45n.copy()
+    # for i, j_idx in enumerate(chain):
+    #     bone_transforms_02v[j_idx, :3, :3] = rot
+    #     t = Jtr[j_idx].copy()
+    #     if i > 0:
+    #         parent = chain[i-1]
+    #         t_p = Jtr[parent].copy()
+    #         t = np.dot(rot, t - t_p)
+    #         t += bone_transforms_02v[parent, :3, -1].copy()
+
+    #     bone_transforms_02v[j_idx, :3, -1] = t
+
+    # bone_transforms_02v[chain, :3, -1] -= np.dot(Jtr[chain], rot.T)
+
+    # return bone_transforms_02v
+
+
+def get_02v_bone_transforms(Jtr):
+    """
+    Compute bone transformations that transform a SMPL A-pose mesh
+    to a star-shaped A-pose (Vitruvian A-pose) using PyTorch.
+    
+    Args:
+        Jtr (torch.Tensor): Joint locations of shape (24, 3)
+    
+    Returns:
+        torch.Tensor: Bone transformations of shape (24, 4, 4)
+    """
+    device = Jtr.device  # Ensure computations stay on the same device
+
+    # Define rotation matrices
+    rot45p = torch.tensor(Rotation.from_euler('z', 45, degrees=True).as_matrix(), dtype=torch.float32, device=device)
+    rot45n = torch.tensor(Rotation.from_euler('z', -45, degrees=True).as_matrix(), dtype=torch.float32, device=device)
+
+    # Initialize transformation matrices (24 x 4 x 4 identity matrices)
+    bone_transforms_02v = torch.eye(4, dtype=torch.float32, device=device).repeat(24, 1, 1)
 
     # First chain: L-hip (1), L-knee (4), L-ankle (7), L-foot (10)
     chain = [1, 4, 7, 10]
-    rot = rot45p.copy()
+    rot = rot45p.clone()
     for i, j_idx in enumerate(chain):
         bone_transforms_02v[j_idx, :3, :3] = rot
-        t = Jtr[j_idx].copy()
+        t = Jtr[j_idx].clone()
         if i > 0:
-            parent = chain[i-1]
-            t_p = Jtr[parent].copy()
-            t = np.dot(rot, t - t_p)
-            t += bone_transforms_02v[parent, :3, -1].copy()
+            parent = chain[i - 1]
+            t_p = Jtr[parent].clone()
+            t = torch.matmul(rot, (t - t_p))
+            t += bone_transforms_02v[parent, :3, -1]
 
         bone_transforms_02v[j_idx, :3, -1] = t
 
-    bone_transforms_02v[chain, :3, -1] -= np.dot(Jtr[chain], rot.T)
+    bone_transforms_02v[chain, :3, -1] -= torch.matmul(Jtr[chain], rot.T)
+
     # Second chain: R-hip (2), R-knee (5), R-ankle (8), R-foot (11)
     chain = [2, 5, 8, 11]
-    rot = rot45n.copy()
+    rot = rot45n.clone()
     for i, j_idx in enumerate(chain):
         bone_transforms_02v[j_idx, :3, :3] = rot
-        t = Jtr[j_idx].copy()
+        t = Jtr[j_idx].clone()
         if i > 0:
-            parent = chain[i-1]
-            t_p = Jtr[parent].copy()
-            t = np.dot(rot, t - t_p)
-            t += bone_transforms_02v[parent, :3, -1].copy()
+            parent = chain[i - 1]
+            t_p = Jtr[parent].clone()
+            t = torch.matmul(rot, (t - t_p))
+            t += bone_transforms_02v[parent, :3, -1]
 
         bone_transforms_02v[j_idx, :3, -1] = t
 
-    bone_transforms_02v[chain, :3, -1] -= np.dot(Jtr[chain], rot.T)
+    bone_transforms_02v[chain, :3, -1] -= torch.matmul(Jtr[chain], rot.T)
 
     return bone_transforms_02v
+
 
 def fetchPly(path):
     plydata = PlyData.read(path)
@@ -76,8 +132,10 @@ def storePly(path, xyz, rgb):
 class AABB(torch.nn.Module):
     def __init__(self, coord_max, coord_min):
         super().__init__()
-        self.register_buffer("coord_max", torch.from_numpy(coord_max).float())
-        self.register_buffer("coord_min", torch.from_numpy(coord_min).float())
+        self.coord_max = coord_max
+        self.coord_min = coord_min
+        # self.register_buffer("coord_max", torch.from_numpy(coord_max).float())
+        # self.register_buffer("coord_min", torch.from_numpy(coord_min).float())
 
     def normalize(self, x, sym=False):
         x = (x - self.coord_min) / (self.coord_max - self.coord_min)

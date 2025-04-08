@@ -44,6 +44,7 @@ class MLP(NonRigidDeform):
         # output dimension: position + scale + rotation
         self.mlp = VanillaCondMLP(d_in, d_cond, d_out, cfg.mlp)
         self.aabb = metadata['aabb']
+        self.Jtr = metadata['Jtr_norm']
 
         self.delay = cfg.get('delay', 0)
 
@@ -56,7 +57,7 @@ class MLP(NonRigidDeform):
             return deformed_gaussians, {}
 
         rots = camera.rots
-        Jtrs = camera.Jtrs
+        Jtrs = self.Jtr
         pose_feat = self.pose_encoder(rots, Jtrs)
 
         if self.latent_dim > 0:
@@ -130,11 +131,12 @@ class HannwMLP(NonRigidDeform):
         # output dimension: position + scale + rotation
         self.mlp = HannwCondMLP(3, self.pose_encoder.n_output_dims, 3 + 3 + 4, cfg.mlp, dim_coord=3)
         self.aabb = metadata['aabb']
+        self.Jtr = metadata['Jtr_norm']
 
 
     def forward(self, gaussians, iteration, camera, compute_loss=True):
         rots = camera.rots
-        Jtrs = camera.Jtrs
+        Jtrs = self.Jtr
         pose_feat = self.pose_encoder(rots, Jtrs)
 
         xyz = gaussians.get_xyz

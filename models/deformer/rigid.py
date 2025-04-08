@@ -9,6 +9,12 @@ import igl
 
 from utils.general_utils import build_rotation
 from models.network_utils import get_skinning_mlp
+from utils.other_utils import barycentric_coordinates_tri
+
+def print_grad(name):
+    def hook(grad):
+        print(f"Gradient of {name}: {grad.mean().item() if grad is not None else 'None'}")
+    return hook
 
 class RigidDeform(nn.Module):
     def __init__(self, cfg):
@@ -35,8 +41,8 @@ class Identity(RigidDeform):
 class SMPLNN(RigidDeform):
     def __init__(self, cfg, metadata):
         super().__init__(cfg)
-        self.smpl_verts = torch.from_numpy(metadata["smpl_verts"]).float().cuda()
-        self.skinning_weights = torch.from_numpy(metadata["skinning_weights"]).float().cuda()
+        self.smpl_verts = metadata["cano_verts"]
+        self.skinning_weights = metadata["skinning_weights"]
 
     def query_weights(self, xyz):
         # find the nearest vertex
@@ -131,10 +137,10 @@ def hierarchical_softmax(x):
 class SkinningField(RigidDeform):
     def __init__(self, cfg, metadata):
         super().__init__(cfg)
-        self.smpl_verts = metadata["smpl_verts"]
+        self.cano_verts = metadata["cano_verts"]
         self.skinning_weights = metadata["skinning_weights"]
         self.aabb = metadata["aabb"]
-        self.faces = np.load('.datasets/body_models/misc/faces.npz')['faces']
+        self.faces = metadata['faces']
         self.cano_mesh = metadata["cano_mesh"]
 
         self.distill = cfg.distill
@@ -171,20 +177,45 @@ class SkinningField(RigidDeform):
         return T_fwd
 
     def sample_skinning_loss(self):
-        points_skinning, face_idx = self.cano_mesh.sample(self.cfg.n_reg_pts, return_index=True)
-        points_skinning = points_skinning.view(np.ndarray).astype(np.float32)
-        bary_coords = igl.barycentric_coordinates_tri(
-            points_skinning,
-            self.smpl_verts[self.faces[face_idx, 0], :],
-            self.smpl_verts[self.faces[face_idx, 1], :],
-            self.smpl_verts[self.faces[face_idx, 2], :],
-        )
-        vert_ids = self.faces[face_idx, ...]
-        pts_W = (self.skinning_weights[vert_ids] * bary_coords[..., None]).sum(axis=1)
+        
+        with torch.no_grad():
+            # Sample points_skinning and face_idx
+            points_skinning, face_idx = self.cano_mesh.sample(self.cfg.n_reg_pts, return_index=True)
 
-        points_skinning = torch.from_numpy(points_skinning).cuda()
-        pts_W = torch.from_numpy(pts_W).cuda()
-        return points_skinning, pts_W
+            # points_skinning: 形状为 [num_points, 3]，即每个点的3D坐标
+            points_skinning = torch.tensor(points_skinning, dtype=torch.float32, device=self.cano_verts.device)
+
+            # 获取对应面的顶点坐标
+            verts_0 = self.cano_verts[self.faces[face_idx, 0], :]
+            verts_1 = self.cano_verts[self.faces[face_idx, 1], :]
+            verts_2 = self.cano_verts[self.faces[face_idx, 2], :]
+
+            # 计算点相对于三角形的重心坐标
+            bary_coords = barycentric_coordinates_tri(torch.stack([verts_0, verts_1, verts_2], dim=0), points_skinning)
+
+            # 获取对应的 skinning 权重
+            vert_ids = self.faces[face_idx, ...]
+
+            # 使用 skinning weights 和重心坐标计算权重
+            pts_W = (self.skinning_weights[vert_ids] * bary_coords[..., None]).sum(dim=1)
+
+            return points_skinning, pts_W
+        
+    # def sample_skinning_loss(self):
+    #     points_skinning, face_idx = self.cano_mesh.sample(self.cfg.n_reg_pts, return_index=True)
+    #     points_skinning = points_skinning.view(np.ndarray).astype(np.float32)
+    #     bary_coords = igl.barycentric_coordinates_tri(
+    #         points_skinning,
+    #         self.smpl_verts[self.faces[face_idx, 0], :],
+    #         self.smpl_verts[self.faces[face_idx, 1], :],
+    #         self.smpl_verts[self.faces[face_idx, 2], :],
+    #     )
+    #     vert_ids = self.faces[face_idx, ...]
+    #     pts_W = (self.skinning_weights[vert_ids] * bary_coords[..., None]).sum(axis=1)
+
+    #     points_skinning = torch.from_numpy(points_skinning).cuda()
+    #     pts_W = torch.from_numpy(pts_W).cuda()
+    #     return points_skinning, pts_W
 
     def softmax(self, logit):
         if logit.shape[-1] == 25:
@@ -233,6 +264,9 @@ class SkinningField(RigidDeform):
         setattr(deformed_gaussians, 'rotation_precomp', rotation_bar)
         # deformed_gaussians._rotation = tf.matrix_to_quaternion(rotation_bar)
         # deformed_gaussians._rotation = rotation_matrix_to_quaternion(rotation_bar)
+
+        x_bar.register_hook(print_grad('xyz_deform'))
+        rotation_bar.register_hook(print_grad('rot_deform'))
 
         return deformed_gaussians
 

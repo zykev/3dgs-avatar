@@ -16,7 +16,7 @@ dataset:
     all: []
   predict_views: ['1']
 
-  train_frames: [ 0, 540, 1 ]
+  train_frames: [0, 100, 10] # [ 0, 540, 1 ]
   val_frames: [ 0, 1, 1 ]
   test_frames:
     view: [0, 540, 30]
@@ -31,5 +31,6 @@ dataset:
   lanczos: false
   resolution: -1
   white_background: false
-  data_device: cuda
+  device: cuda
+  padding: 0.1
   eval: false
