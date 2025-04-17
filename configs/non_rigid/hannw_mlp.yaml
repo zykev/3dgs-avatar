@@ -21,7 +21,7 @@ model:
         multires: 6
 
         embedder:
-          kick_in_iter: 3000 # 3000
+          kick_in_iter: 0 # 3000
           full_band_iter: 10000
 
 opt:

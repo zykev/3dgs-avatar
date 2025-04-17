@@ -8,6 +8,12 @@ from models.network_utils import (HierarchicalPoseEncoder,
                                   HashGrid)
 from utils.general_utils import quaternion_multiply
 
+
+def print_grad(name):
+    def hook(grad):
+        print(f"Gradient of {name}: {grad.mean().item() if grad is not None else 'None'}")
+    return hook
+
 class NonRigidDeform(nn.Module):
     def __init__(self, cfg):
         super().__init__()
@@ -138,6 +144,7 @@ class HannwMLP(NonRigidDeform):
         rots = camera.rots
         Jtrs = self.Jtr
         pose_feat = self.pose_encoder(rots, Jtrs)
+        pose_feat.register_hook(print_grad("pose_feat"))
 
         xyz = gaussians.get_xyz
         xyz_norm = self.aabb.normalize(xyz, sym=True)
@@ -145,6 +152,7 @@ class HannwMLP(NonRigidDeform):
 
 
         deltas = self.mlp(xyz_norm, iteration, cond=pose_feat)
+
 
         if iteration < self.cfg.mlp.embedder.kick_in_iter:
             deltas = deltas * torch.zeros_like(deltas)
